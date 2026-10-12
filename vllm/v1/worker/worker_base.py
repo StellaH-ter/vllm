@@ -354,6 +354,11 @@ class WorkerWrapperBase:
             self.vllm_config.cache_config.num_cpu_blocks = (
                 unify_cpu_offload_num_chunks(self.vllm_config, kv_cache_configs)
             )
+            logger.info(
+                "[CPU offload] rank=%d recomputed unified num_cpu_blocks=%s",
+                self.global_rank,
+                self.vllm_config.cache_config.num_cpu_blocks,
+            )
 
         with set_current_vllm_config(self.vllm_config):
             self.worker.initialize_from_config(kv_cache_config)  # type: ignore

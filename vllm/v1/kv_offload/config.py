@@ -6,9 +6,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from vllm.logger import init_logger
+
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
     from vllm.v1.kv_cache_interface import KVCacheConfig
+
+logger = init_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -126,6 +130,8 @@ def unify_cpu_offload_num_chunks(
     if kv_transfer_config is None:
         return None
 
+    details: list[str] = []
+
     def _num_chunks(kv_cache_config: "KVCacheConfig") -> int:
         # A stage owning no offloadable group has no CPU-tier capacity, so it
         # pins the unified count to 0 (offloading disabled engine-wide). Such
@@ -133,10 +139,26 @@ def unify_cpu_offload_num_chunks(
         # construction anyway; 0 keeps every chunk id addressable if that
         # ever changes.
         if not get_offloading_group_ids(kv_cache_config):
+            details.append("no offloadable group")
             return 0
-        layout = cpu_offload_layout(
-            build_offloading_config(vllm_config, kv_cache_config, kv_transfer_config)
+        offloading_config = build_offloading_config(
+            vllm_config, kv_cache_config, kv_transfer_config
+        )
+        layout = cpu_offload_layout(offloading_config)
+        details.append(
+            f"kv_bytes_per_block={offloading_config.worker_kv_bytes_per_block} "
+            f"own_num_chunks={layout.num_chunks} "
+            f"row_stride={layout.kv_bytes_per_chunk} "
+            f"cpu_page_size={layout.cpu_page_size_per_worker} "
+            f"num_copies={layout.num_copies}"
         )
         return layout.num_chunks
 
-    return min(_num_chunks(c) for c in kv_cache_configs)
+    unified = min(_num_chunks(c) for c in kv_cache_configs)
+    logger.info(
+        "[CPU offload] unified num_chunks=%d over %d workers: %s",
+        unified,
+        len(kv_cache_configs),
+        " | ".join(details),
+    )
+    return unified

@@ -5,6 +5,7 @@ from typing import Any, NamedTuple
 import torch
 from typing_extensions import override
 
+from vllm.logger import init_logger
 from vllm.platforms import current_platform
 from vllm.utils.math_utils import round_up
 from vllm.v1.kv_offload.base import (
@@ -22,6 +23,8 @@ from vllm.v1.kv_offload.cpu.common import CPUOffloadingMetrics
 from vllm.v1.kv_offload.cpu.gpu_worker import CPUOffloadingWorker
 from vllm.v1.kv_offload.cpu.manager import CPUOffloadingManager
 from vllm.v1.kv_offload.cpu.shared_offload_region import SharedOffloadRegion
+
+logger = init_logger(__name__)
 
 
 def _all_workers_barrier() -> None:
@@ -154,11 +157,13 @@ class CPUOffloadingSpec(OffloadingSpec):
         self.num_chunks = 0
         self.kv_bytes_per_chunk = 0
         self.cpu_page_size_per_worker = 0
+        num_copies = 0
         self.replicated_layout = config.replicated_layout and uses_shared_region()
         if config.worker_kv_bytes_per_block > 0 and world_size > 0:
             layout = cpu_offload_layout(config)
             self.cpu_page_size_per_worker = layout.cpu_page_size_per_worker
             self.kv_bytes_per_chunk = layout.kv_bytes_per_chunk
+            num_copies = layout.num_copies
             # The scheduler's unified count wins: it is the minimum over workers,
             # so it is addressable on every one of them.
             self.num_chunks = (
@@ -166,6 +171,17 @@ class CPUOffloadingSpec(OffloadingSpec):
                 if config.num_cpu_blocks is not None
                 else layout.num_chunks
             )
+        logger.info(
+            "[CPU offload spec] worker_kv_bytes_per_block=%d num_chunks=%d "
+            "row_stride=%d cpu_page_size=%d num_copies=%d "
+            "unified_num_cpu_blocks=%s",
+            config.worker_kv_bytes_per_block,
+            self.num_chunks,
+            self.kv_bytes_per_chunk,
+            self.cpu_page_size_per_worker,
+            num_copies,
+            config.num_cpu_blocks,
+        )
 
         # scheduler-side
         self._manager: OffloadingManager | None = None
